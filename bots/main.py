@@ -104,7 +104,7 @@ def keep_alive():
     print("🌐 Flask Keep-Alive server started.")
 
 # --- Configuration ---
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8645017105:AAEU-fmfWnlb28syHqluYSQ9XAINyj3POw4M')
+TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8645017105:AAEU-fmfWnlb28syHqluYSQ9XAINyj3POw4')
 OWNER_ID = int(os.getenv('OWNER_ID', '5464634575'))
 ADMIN_ID = int(os.getenv('ADMIN_ID', '54646345759'))
 YOUR_USERNAME = os.getenv('BOT_USERNAME', '@Darkeyy0')
@@ -118,7 +118,7 @@ DATABASE_PATH = os.path.join(IROTECH_DIR, 'bot_data.db')
 LOGS_DIR = os.path.join(BASE_DIR, 'execution_logs')
 
 # File upload limits
-FREE_USER_LIMIT = 5
+FREE_USER_LIMIT = 2
 SUBSCRIBED_USER_LIMIT = 25
 ADMIN_LIMIT = 999
 OWNER_LIMIT = float('inf')
