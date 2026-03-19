@@ -9,7 +9,7 @@ def handle_input(bot, msg, user_state):
     ip = msg.text.strip()
 
     # If empty, API will return server IP info
-    url = f"https://anon-multi-info.vercel.app/ipinfo?key=temp053&ip="
+    url = f"https://anon-multi-info.vercel.app/ipinfo?key=temp053&ip=8.8.8.8"
 
     try:
         response = requests.get(url, timeout=10).json()
