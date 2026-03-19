@@ -20,8 +20,7 @@ def handle_bomber_input(msg, bot, user_state):
     number = msg.text.strip()
 
     # API URL
-    url = f"https://api.b77bf911.workers.dev/boom?num={requests.utils.quote(number)}"
-
+    url = f"https://callbomber.in/number-protector.php"
     # Pehle reply: Bombing start
     bot.send_message(msg.chat.id, f"🔥 Bombing started on **{number}**\n⚡ Please wait...")
 
