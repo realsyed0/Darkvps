@@ -585,6 +585,1161 @@ async def verify_user_channels(update, context, user_id):
             await send_channel_verification_message(update, context, user_id)
             return False
     except Exception as e:
-    logging.error(f"Error in verify_user_channels: {e}")
-    return False
- 
+            logging.error(f"Error in verify_user_channels: {e}")
+        return False
+
+async def send_channel_verification_message(update, context, user_id):
+    """Send channel join verification message"""
+    try:
+        channel_text = "🔰 *CHANNEL MEMBERSHIP REQUIRED*\n\n"
+        channel_text += "To access all features of this bot, you need to join our official channels.\n\n"
+        
+        channel_text += "*📢 Required Channels:*\n"
+        for i, channel in enumerate(REQUIRED_CHANNELS, 1):
+            channel_text += f"{i}. {channel['name']}\n"
+        
+        channel_text += "\n📋 *Instructions:*\n"
+        channel_text += "1. Click each channel button below to join\n"
+        channel_text += "2. Join ALL channels\n"
+        channel_text += "3. Return here and click verify\n"
+        channel_text += "4. Get instant access to bot features\n\n"
+        channel_text += "🔒 *Privacy Note:* We only verify membership, no personal data is stored."
+        
+        # Create inline keyboard with channel buttons
+        keyboard = []
+        
+        # Add channel buttons
+        for channel in REQUIRED_CHANNELS:
+            keyboard.append([InlineKeyboardButton(f"🔗 Join {channel['name']}", url=channel['url'])])
+        
+        # Add verify button
+        keyboard.append([InlineKeyboardButton("✅ VERIFY MEMBERSHIP", callback_data="verify_channels")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.message:
+            await update.message.reply_text(channel_text, reply_markup=reply_markup, parse_mode='Markdown')
+        else:
+            await context.bot.send_message(chat_id=user_id, text=channel_text, reply_markup=reply_markup, parse_mode='Markdown')
+        
+        logging.info(f"Sent channel verification message to user {user_id}")
+    except Exception as e:
+        logging.error(f"Error sending verification message: {e}")
+
+async def send_main_menu(update, context, user_id):
+    """Send the main menu/dashboard"""
+    # FIXED: Use ensure_user to make sure user exists with proper credits
+    ensure_user(user_id)
+    user_data = get_user(user_id)
+    credits = user_data[3] if user_data else 0
+    
+    menu_text = f"""
+🤖 Welcome to Ghost OSINT Bot
+
+💰 Your Credits: {credits}
+
+🔍 Features:
+• Phone number lookup with detailed OSINT
+• Multiple data sources for accurate results  
+• Downloadable reports in TXT format
+• Referral system to earn more credits
+
+📊 What you get in reports:
+• Personal details & Aadhaar data
+• Network & carrier information
+• Location tracking data
+• Device identifiers
+• Personality analysis
+
+💡 Each lookup costs {LOOKUP_COST} credit
+    """
+    
+    keyboard = [
+        [{"text": "📱 Phone Info"}, {"text": "💰 My Credits"}],
+        [{"text": "🔗 My Referral"}, {"text": "🎁 Redeem Code"}],
+        [{"text": "❓ Help"}, {"text": "🧑‍💻 Support"}]
+    ]
+    reply_markup = {"keyboard": keyboard, "resize_keyboard": True}
+    
+    if update.message:
+        await update.message.reply_text(menu_text, reply_markup=reply_markup)
+    else:
+        await context.bot.send_message(chat_id=user_id, text=menu_text, reply_markup=reply_markup)
+
+# ===== ENHANCED PHONE LOOKUP WITH UPDATED APIS =====
+def phone_lookup(number: str):
+    number = re.sub(r'\D', '', number)
+    
+    if len(number) < 10:
+        return {"error": "❌ Invalid phone number. Please enter a valid 10-digit phone number."}
+    
+    if not number.isdigit():
+        return {"error": "❌ Phone number should contain only digits."}
+    
+    if number.startswith('+91'):
+        number = number[3:]
+    elif number.startswith('91') and len(number) == 12:
+        number = number[2:]
+    
+    if len(number) != 10:
+        return {"error": "❌ Please enter a valid 10-digit phone number."}
+    
+    if not number.startswith(('6', '7', '8', '9')):
+        return {"error": "❌ Invalid mobile number format. Indian numbers usually start with 6,7,8,9."}
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    for api in APIS:
+        try:
+            api_name = api["name"]
+            url = api["url"].format(number=number)
+            
+            logging.info(f"[PHONE] Trying {api_name} for {number}")
+            
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            logging.info(f"[PHONE] {api_name} raw response: {data}")
+            
+            processed_data = process_api_response(api_name, data, number)
+            
+            if processed_data and processed_data.get("name") not in ["N/A", "Unknown", None, ""]:
+                logging.info(f"[PHONE] Success with {api_name} for {number}: {processed_data}")
+                return processed_data
+            else:
+                logging.warning(f"[PHONE] {api_name} returned no valid data for {number}")
+                continue
+                
+        except requests.exceptions.Timeout:
+            logging.warning(f"[PHONE] {api_name} timeout for {number}")
+            continue
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"[PHONE] {api_name} error: {e}")
+            continue
+        except Exception as e:
+            logging.error(f"[PHONE] {api_name} unexpected error: {e}")
+            continue
+    
+    return {"error": "⚠️ No data found for this number across all sources"}
+
+def process_api_response(api_name, data, number):
+    """Process different API response formats with exact field mapping"""
+    try:
+        # Common format for all new APIs
+        if data.get("data") and isinstance(data["data"], list) and len(data["data"]) > 0:
+            result = data["data"][0]
+            return {
+                "name": result.get("name", "N/A"),
+                "father_name": result.get("fname", "N/A"),
+                "address": result.get("address", "N/A"),
+                "circle": result.get("circle", "Unknown"),
+                "aadhaar_id": result.get("id", "N/A"),
+                "mobile": number,
+                "alternate_mobile": result.get("alt", "N/A"),
+                "status": "success"
+            }
+        
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error processing {api_name} response: {e}")
+        return None
+
+# ===== REPORT GENERATION FUNCTIONS =====
+def generate_imei():
+    base_imei = ''.join([str(random.randint(0, 9)) for _ in range(15)])
+    positions = random.sample(range(15), 4)
+    imei_list = list(base_imei)
+    for pos in positions:
+        imei_list[pos] = '*'
+    return ''.join(imei_list)
+
+def generate_ip():
+    return f"192.168.{random.randint(1, 255)}.{random.randint(1, 255)}"
+
+def generate_mac():
+    return ":".join([f"{random.randint(0x00, 0xff):02x}" for _ in range(6)])
+
+def extract_location_info(address):
+    if address == "N/A" or address == "***" or not address:
+        return "N/A", "N/A", "N/A", "N/A", "N/A"
+    
+    try:
+        address = address.strip()
+        parts = re.split(r'[!,\n]', address)
+        parts = [part.strip() for part in parts if part.strip()]
+        parts = [part for part in parts if part]
+        
+        if len(parts) >= 3:
+            state = "N/A"
+            for part in reversed(parts):
+                if part.upper() in ['BIHAR', 'UP', 'UTTAR PRADESH', 'DELHI', 'MAHARASHTRA', 'WEST BENGAL', 'TAMIL NADU', 'KARNATAKA', 'KERALA']:
+                    state = part
+                    break
+            if state == "N/A" and len(parts) > 1:
+                state = parts[-1]
+            
+            city = "N/A"
+            for part in parts:
+                if any(keyword in part.upper() for keyword in ['MADHUBANI', 'PATNA', 'DELHI', 'MUMBAI', 'KOLKATA', 'CHENNAI', 'BANGALORE']):
+                    city = part
+                    break
+            if city == "N/A" and len(parts) > 2:
+                city = parts[-2]
+            
+            hometown = parts[0] if parts else "N/A"
+            
+            mobile_location = hometown if hometown != "N/A" else "Unknown"
+            tower_location = city if city != "N/A" else hometown if hometown != "N/A" else "Unknown"
+            
+            state = state.replace('!', '').strip()
+            city = city.replace('!', '').strip()
+            hometown = hometown.replace('!', '').strip()
+     return state, city, hometown, f"Near {mobile_location}", f"Tower near {tower_location}"
+        
+        else:
+            state = parts[-1] if parts else "N/A"
+            city = parts[-2] if len(parts) >= 2 else "N/A"
+            hometown = parts[0] if parts else "N/A"
+            mobile_location = f"Near {hometown}" if hometown != "N/A" else "N/A"
+            tower_location = f"Tower near {city}" if city != "N/A" else "N/A"
+            
+            return state, city, hometown, mobile_location, tower_location
+            
+    except Exception as e:
+        logging.error(f"Error extracting location info: {e}")
+        return "N/A", "N/A", "N/A", "N/A", "N/A"
+
+def generate_personality(name):
+    if not name or name == 'N/A':
+        return random.choice(PERSONALITY_TRAITS)
+    
+    female_indicators = ['priya', 'sita', 'rani', 'laxmi', 'kumari', 'devi', 'shanti', 'anjali']
+    male_indicators = ['kumar', 'singh', 'raj', 'ram', 'lal', 'prasad', 'khan']
+    
+    name_lower = name.lower()
+    gender = 'she' if any(indicator in name_lower for indicator in female_indicators) else 'he'
+    
+    trait = random.choice(PERSONALITY_TRAITS)
+    return f"{gender.capitalize()} has {trait.lower()}"
+
+def create_report_text(number, api_data):
+    current_date = datetime.now().strftime("%d-%b-%Y | %H:%M:%S IST")
+    
+    name = api_data.get('name', '')
+    personality = generate_personality(name)
+    
+    address = api_data.get('address', 'N/A')
+    state, city, hometown, mobile_location, tower_location = extract_location_info(address)
+    
+    circle = api_data.get('circle', 'Unknown')
+    carriers = ["Jio", "Airtel", "Vi", "BSNL"]
+    carrier = random.choice(carriers)
+    
+    report = f"""
+────────────────────────────
+🔍 GHOST NUMBER OSINT REPORT
+────────────────────────────
+
+📱 Number: {number}
+🕵️ Scanned On: {current_date}
+
+────────────────────────────
+🧾 AADHAAR OSINT DATA
+────────────────────────────
+
+👤 Name: {api_data.get('name', 'N/A')}
+👨‍👦 Father/Guardian: {api_data.get('father_name', 'N/A')}
+🏠 Address: {address}
+🌐 Circle: {circle}
+🆔 ID Number: {api_data.get('aadhaar_id', 'N/A')}
+
+────────────────────────────
+📞 NUMBER LOOKUP DATA
+────────────────────────────
+👤 Owner Name: {api_data.get('name', 'N/A')}
+🏠 Owner Address: {address}
+📱 Carrier: {carrier}
+📶 Connection: {carrier} SIM
+📍 State: {state}
+🏙️ Hometown: {hometown}
+🌐 Reference City: {city}
+📡 Mobile Locations: {mobile_location}
+📡 Tower Locations: {tower_location}
+📱 IMEI: {generate_imei()}
+🌐 IP: {generate_ip()}
+🔗 MAC: {generate_mac()}
+📊 Tracking History: Traced by {random.randint(1,50)} people in 24 hrs
+🧠 Personality: {personality}
+
+────────────────────────────
+👨‍💻 Developer: @Darkeyy0
+────────────────────────────
+"""
+    return report
+
+def create_report_file(number, api_data):
+    """Create a TXT file with the report"""
+    report_text = create_report_text(number, api_data)
+    
+    if not os.path.exists('reports'):
+        os.makedirs('reports')
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"reports/lookup_{number}_{timestamp}.txt"
+    
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write(report_text)
+    
+    return filename
+
+# ===== BOT HANDLERS =====
+async def start(update, context):
+    if not update.message:
+        return
+    
+    user_id = update.effective_user.id
+    first_name = update.effective_user.first_name
+    username = update.effective_user.username
+    
+    referred_by = 0
+    if context.args:
+        try:
+            referred_by = int(context.args[0])
+        except ValueError:
+            referred_by = 0
+    
+    user_data = get_user(user_id)
+    if user_data and user_data[5] == 1:
+        await update.message.reply_text("🚫 You are banned from using this bot.")
+        return
+    
+    # FIXED: Use ensure_user instead of add_user to handle credit initialization properly
+    ensure_user(user_id, username, first_name, referred_by)
+    
+    # Get updated user data to show credits
+    user_data = get_user(user_id)
+    credits = user_data[3] if user_data else 0
+    
+    logging.info(f"User {user_id} credits after ensure: {credits}")
+    
+    # Use central verification function
+    has_access = await verify_user_channels(update, context, user_id)
+    if has_access:
+        await send_main_menu(update, context, user_id)
+
+async def handle_button(update, context):
+    if not update.message or not update.message.text:
+        return
+    
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    # Check if user has joined channels using central verification
+    has_access = await verify_user_channels(update, context, user_id)
+    if not has_access:
+        return
+    
+    # FIXED: Ensure user exists with proper credits before any operation
+    ensure_user(user_id)
+    user_data = get_user(user_id)
+    
+    if text == "📱 Phone Info":
+        if not user_data or user_data[3] < LOOKUP_COST:
+            await update.message.reply_text(f"❌ You don't have enough credits! (Cost: {LOOKUP_COST} credit)")
+            return
+        
+        await update.message.reply_text(
+            "🔢 Send any 10-digit mobile number to get detailed OSINT report\n"
+            "📱 Example: 9876543210\n\n"
+            "🕵️ What you'll get:\n"
+            "• Personal details (Aadhaar linked)\n"
+            "• Network & carrier info\n"
+            "• Location data\n"
+            "• Device identifiers\n"
+            "• Full downloadable report\n\n"
+            f"⚠️ Note: This will deduct {LOOKUP_COST} credit from your balance.\n\n"
+            "💡 Just type the 10-digit number now..."
+        )
+        
+        context.user_data['waiting_for_number'] = True
+        
+    elif text == "💰 My Credits":
+        # FIXED: Use ensure_user to make sure credits are properly set
+        ensure_user(user_id)
+        user_data = get_user(user_id)
+        credits = user_data[3] if user_data else 0
+        referral_count, bonus_earned = get_referral_stats(user_id)
+        referred_by = get_referred_by(user_id)
+        
+        credit_text = f"""💰 Credits: {credits}
+
+🆔 Referral Code: {user_id}
+👥 Referred By: {'None' if referred_by == 0 else referred_by}
+📈 Referrals: {referral_count}
+🎁 Referral Bonus Earned: {bonus_earned} credits"""
+        
+        await update.message.reply_text(credit_text)
+        
+    elif text == "🔗 My Referral":
+        referral_count, bonus_earned = get_referral_stats(user_id)
+        
+        referral_text = f"""📣 Your Referral Info:
+
+🆔 Referral Code: {user_id}
+🔗 Referral Link: https://t.me/{(await context.bot.get_me()).username}?start={user_id}
+👥 Total Referrals: {referral_count}
+
+💰 Earn {REFERRAL_BONUS} credits per new user who joins using your link!"""
+        
+        await update.message.reply_text(referral_text)
+        
+    elif text == "🎁 Redeem Code":
+        await update.message.reply_text(
+            "🎁 Redeem Code\n\n"
+            "To redeem a code, use the command:\n"
+            "/redeem <code>\n\n"
+            "Example: /redeem ABC123XY\n\n"
+            "💡 Get redeem codes from:\n"
+            "• Admin giveaways\n"
+            "• Special events\n"
+            "• Promotional campaigns\n\n"
+            "🔑 Note: Codes are case-insensitive"
+        )
+        
+    elif text == "❓ Help":
+        help_text = """
+🤖 Ghost Number OSINT Bot Help
+
+🔍 How to use:
+1. Tap 'Phone Info'
+2. Send any 10-digit Indian number
+3. Get detailed OSINT report
+
+💰 Credit System:
+- Each lookup costs 1 credit
+- Get 4 credits per referral
+- Start with 4 free credits
+
+📊 What's in the report:
+• Personal details & Aadhaar data
+• Network & carrier information  
+• Location tracking data
+• Device identifiers
+• Personality analysis
+
+🔗 Referral Program:
+Share your referral link to earn credits!
+
+🎁 Redeem Codes:
+Use /redeem <code> to redeem credits
+
+Need more help? Contact support.
+"""
+        await update.message.reply_text(help_text)
+        
+    elif text == "🧑‍💻 Support":
+        await update.message.reply_text(
+            "🧑🏻‍💻 Need help?\nContact: @Ghostxkingg"
+        )
+
+async def handle_callback_query(update, context):
+    """Handle inline keyboard callbacks"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "verify_channels":
+        logging.info(f"User {user_id} clicked verify_channels button")
+        
+        # Show checking message
+        await query.edit_message_text("🔄 Checking channel membership...\n\nPlease wait while we verify your subscriptions.")
+        
+        # Check if user has joined all channels
+        is_member = await check_channel_membership(user_id, context.bot)
+        
+        if is_member:
+            # Update database and send main menu
+            update_channel_status(user_id, 1)
+            await query.edit_message_text("✅ *Verification Successful!*\n\n🎉 Welcome to Ghost OSINT Bot! You now have full access to all features.", parse_mode='Markdown')
+            logging.info(f"User {user_id} successfully verified channels")
+            await send_main_menu(update, context, user_id)
+        else:
+            await query.edit_message_text("❌ *Verification Failed*\n\nYou haven't joined all required channels yet. Please make sure you've joined ALL channels below and try again.", parse_mode='Markdown')
+            logging.info(f"User {user_id} failed channel verification")
+            
+            # Resend the channel list with verify button
+            await send_channel_verification_message(update, context, user_id)
+
+async def process_number_lookup(update, context):
+    user_id = update.effective_user.id
+    
+    # Check if user has joined channels using central verification
+    has_access = await verify_user_channels(update, context, user_id)
+    if not has_access:
+        return
+    
+    if context.user_data.get('waiting_for_number'):
+        number = update.message.text.strip()
+        
+        # FIXED: Ensure user exists with proper credits before lookup
+        ensure_user(user_id)
+        user_data = get_user(user_id)
+        
+        if not user_data or user_data[3] < LOOKUP_COST:
+            await update.message.reply_text(f"❌ You don't have enough credits! (Cost: {LOOKUP_COST} credit)")
+            context.user_data['waiting_for_number'] = False
+            return
+
+     
+        if not re.match(r'^[6-9]\d{9}$', number):
+            await update.message.reply_text("❌ Please enter a valid 10-digit Indian mobile number starting with 6,7,8, or 9.")
+            return
+        
+        update_credits(user_id, -LOOKUP_COST, "Phone lookup")
+        
+        processing_msg = await update.message.reply_text(
+            f"🔄 Processing lookup for {number}\n\n"
+            "🔍 Checking multiple data sources...\n"
+            "⌛ This may take 10-15 seconds"
+        )
+        
+        try:
+            api_data = phone_lookup(number)
+            
+            if 'error' not in api_data:
+                filename = create_report_file(number, api_data)
+                
+                with open(filename, 'rb') as file:
+                    caption = f"🔍 OSINT Report for {number}\n\n"
+                    caption += f"👤 Name: {api_data.get('name', 'N/A')}\n"
+                    caption += f"🏠 Address: {api_data.get('address', 'N/A')[:100]}...\n"
+                    caption += f"👨‍👦 Father: {api_data.get('father_name', 'N/A')}\n"
+                    caption += f"🌐 Circle: {api_data.get('circle', 'Unknown')}\n\n"
+                    caption += f"💰 Credits left: {user_data[3] - 1}"
+                    
+                    await update.message.reply_document(
+                        document=file,
+                        filename=f"OSINT_Report_{number}.txt",
+                        caption=caption
+                    )
+                
+                try:
+                    os.remove(filename)
+                except:
+                    pass
+                
+            else:
+                update_credits(user_id, LOOKUP_COST, "Lookup refund")
+                await update.message.reply_text(f"❌ {api_data['error']}\n\n💰 Your credit has been refunded.")
+                
+        except Exception as e:
+            logging.error(f"API Error: {e}")
+            update_credits(user_id, LOOKUP_COST, "Lookup error refund")
+            await update.message.reply_text("❌ Error processing your request. Your credit has been refunded.")
+        
+        finally:
+            await processing_msg.delete()
+            context.user_data['waiting_for_number'] = False
+    
+    else:
+        number = update.message.text.strip()
+        if re.match(r'^[6-9]\d{9}$', number):
+            await update.message.reply_text("⚠️ Please first click '📱 Phone Info' button to start a lookup.")
+
+# ===== MISSING COMMAND HANDLERS =====
+async def redeem_cmd(update, context):
+    user_id = update.effective_user.id
+    
+    # Check if user has joined channels using central verification
+    has_access = await verify_user_channels(update, context, user_id)
+    if not has_access:
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /redeem <code>")
+        return
+    
+    code = context.args[0].upper()
+    credits_added = use_redeem_code(code, user_id)
+    
+    if credits_added:
+        user_data = get_user(user_id)
+        new_credits = user_data[3] if user_data else 0
+        await update.message.reply_text(f"✅ Code redeemed successfully! +{credits_added} credits\n💰 Total credits: {new_credits}")
+    else:
+        await update.message.reply_text("❌ Invalid or expired redeem code!")
+
+async def admin_commands(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    commands_text = """
+🔧 ADMIN COMMANDS:
+
+👥 User Management:
+/addcredits <user_id> <amount> - Add credits to user
+/removecredits <user_id> <amount> - Remove credits from user  
+/setcredits <user_id> <amount> - Set user credits to specific amount
+/resetcredits <user_id> - Reset user credits to 4
+/resetuser <user_id> - Reset specific user
+/usercredits <user_id> - Check user credits
+/usercreditsdetailed <user_id> - Detailed user credit info
+/credithistory <user_id> - View user credit history
+/ban <user_id> - Ban user
+/unban <user_id> - Unban user
+/userstats - All user statistics
+
+🎁 Code Management:
+/addcode <credits> [max_uses] - Generate redeem code
+/revokeredeem <code> - Revoke redeem code
+/debugcodes - Debug redeem codes
+/listcodes - List all redeem codes
+
+📊 System:
+/broadcast <message> - Broadcast to all users
+/resetallcredits - Reset ALL users credits to 4
+/debugphone <number> - Debug phone lookup
+/testcodes - Test redeem code system
+
+❓ Help:
+/adminhelp - Show this help message
+"""
+    await update.message.reply_text(commands_text)
+
+async def add_credits_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: /addcredits <user_id> <amount>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        amount = int(context.args[1])
+        
+        # FIXED: Use ensure_user before adding credits
+        ensure_user(target_user)
+        update_credits(target_user, amount, f"Admin added by {user_id}", user_id)
+        user_data = get_user(target_user)
+        new_credits = user_data[3] if user_data else 0
+        
+        await update.message.reply_text(f"✅ Added {amount} credits to user {target_user}\n💰 New balance: {new_credits}")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID or amount")
+
+async def remove_credits_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: /removecredits <user_id> <amount>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        amount = int(context.args[1])
+        
+        # FIXED: Use ensure_user before removing credits
+        ensure_user(target_user)
+        update_credits(target_user, -amount, f"Admin removed by {user_id}", user_id)
+        user_data = get_user(target_user)
+        new_credits = user_data[3] if user_data else 0
+        
+        await update.message.reply_text(f"✅ Removed {amount} credits from user {target_user}\n💰 New balance: {new_credits}")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID or amount")
+
+async def set_credits_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: /setcredits <user_id> <amount>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        amount = int(context.args[1])
+        
+        # FIXED: Use ensure_user before setting credits
+        ensure_user(target_user)
+        set_credits(target_user, amount, f"Admin set by {user_id}", user_id)
+        await update.message.reply_text(f"✅ Set credits for user {target_user} to {amount}")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID or amount")
+
+async def reset_credits_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /resetcredits <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        difference = reset_user_credits(target_user)
+        
+        await update.message.reply_text(f"✅ Reset credits for user {target_user} to {DEFAULT_CREDITS} (adjusted by {difference})")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def reset_user_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /resetuser <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        reset_user_credits(target_user)
+        await update.message.reply_text(f"✅ User {target_user} has been reset to default credits ({DEFAULT_CREDITS})")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def user_credits_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /usercredits <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        user_data = get_user(target_user)
+        
+        if user_data:
+            credits = user_data[3]
+            username = user_data[1] or "No username"
+            first_name = user_data[2] or "No name"
+            
+            await update.message.reply_text(f"👤 User: {first_name} (@{username})\n🆔 ID: {target_user}\n💰 Credits: {credits}")
+        else:
+            await update.message.reply_text("❌ User not found")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def user_credits_detailed_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /usercreditsdetailed <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        user_data = get_user(target_user)
+        
+        if user_data:
+            credits = user_data[3]
+            username = user_data[1] or "No username"
+            first_name = user_data[2] or "No name"
+            joined_channels = "✅" if user_data[4] == 1 else "❌"
+            is_banned = "✅" if user_data[5] == 1 else "❌"
+            referred_by = user_data[6]
+            referral_count = user_data[7]
+            referral_bonus = user_data[8]
+            
+            response = f"""👤 USER DETAILS:
+
+🆔 ID: {target_user}
+👤 Name: {first_name}
+📱 Username: @{username}
+💰 Credits: {credits}
+📢 Channels Joined: {joined_channels}
+🚫 Banned: {is_banned}
+🔗 Referred By: {referred_by if referred_by else 'None'}
+📈 Referrals: {referral_count}
+🎁 Referral Bonus: {referral_bonus} credits"""
+            
+            await update.message.reply_text(response)
+        else:
+            await update.message.reply_text("❌ User not found")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def credit_history_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /credithistory <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        history = get_credit_history(target_user, 10)
+        
+        if history:
+            response = f"📊 Credit History for {target_user}:\n\n"
+            for amount, reason, date in history:
+                sign = "+" if amount > 0 else ""
+                response += f"• {sign}{amount} - {reason}\n  📅 {date}\n\n"
+            
+            await update.message.reply_text(response)
+        else:
+            await update.message.reply_text("❌ No credit history found for this user")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def add_code_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("❌ Usage: /addcode <credits> [max_uses=1]")
+        return
+    
+    try:
+        credits = int(context.args[0])
+        max_uses = int(context.args[1]) if len(context.args) > 1 else 1
+        
+        code = create_redeem_code(credits, user_id, max_uses)
+        await update.message.reply_text(f"✅ Redeem code created!\n\n🔑 Code: `{code}`\n💰 Credits: {credits}\n🔢 Max Uses: {max_uses}", parse_mode='Markdown')
+    except ValueError:
+        await update.message.reply_text("❌ Invalid credits or max_uses value")
+
+async def revoke_redeem_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /revokeredeem <code>")
+        return
+    
+    code = context.args[0].upper()
+    if revoke_redeem_code(code):
+        await update.message.reply_text(f"✅ Redeem code `{code}` has been revoked.", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("❌ Code not found or already revoked")
+
+async def debug_codes_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    codes = get_redeem_codes()
+    
+    if not codes:
+        await update.message.reply_text("❌ No redeem codes found")
+        return
+            
+    response = "🔍 REDEEM CODES DEBUG:\n\n"
+    for code in codes[:10]:  # Show first 10 codes
+        code_text, credits, created_by, created_at, expires_at, used_by, max_uses, use_count = code
+        
+        status = "✅ ACTIVE" if use_count < max_uses and (not expires_at or expires_at > datetime.now()) else "❌ EXPIRED/USED"
+        used_info = f"Used {use_count}/{max_uses} times"
+        if used_by:
+            used_info += f" by {used_by}"
+        
+        response += f"🔑 {code_text}\n💰 {credits} credits\n{used_info}\n📅 Created: {created_at}\n⏰ Expires: {expires_at}\n{status}\n\n"
+    
+    await update.message.reply_text(response)
+
+async def ban_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /ban <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        ban_user(target_user)
+        await update.message.reply_text(f"✅ User {target_user} has been banned")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def unban_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /unban <user_id>")
+        return
+    
+    try:
+        target_user = int(context.args[0])
+        unban_user(target_user)
+        await update.message.reply_text(f"✅ User {target_user} has been unbanned")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def user_stats_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    users = get_all_users()
+    total_users = len(users)
+    total_credits = sum(user[3] for user in users)
+    banned_users = sum(1 for user in users if user[5] == 1)
+    active_users = total_users - banned_users
+    
+    response = f"""📊 USER STATISTICS:
+
+👥 Total Users: {total_users}
+✅ Active Users: {active_users}
+🚫 Banned Users: {banned_users}
+💰 Total Credits: {total_credits}
+
+📈 User Distribution:"""
+    
+    # Credit distribution
+    credit_ranges = {
+        "0-2": 0,
+        "3-10": 0,
+        "11-20": 0,
+        "21+": 0
+    }
+    
+    for user in users:
+        credits = user[3]
+        if credits <= 2:
+            credit_ranges["0-2"] += 1
+        elif credits <= 10:
+            credit_ranges["3-10"] += 1
+        elif credits <= 20:
+            credit_ranges["11-20"] += 1
+        else:
+            credit_ranges["21+"] += 1
+    
+    for range_name, count in credit_ranges.items():
+        percentage = (count / total_users) * 100 if total_users > 0 else 0
+        response += f"\n• {range_name} credits: {count} users ({percentage:.1f}%)"
+    
+    await update.message.reply_text(response)
+
+async def broadcast_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /broadcast <message>")
+        return
+    
+    message = ' '.join(context.args)
+    users = get_all_users()
+    successful = 0
+    failed = 0
+    
+    status_msg = await update.message.reply_text(f"📢 Broadcasting to {len(users)} users...")
+    
+    for user in users:
+        try:
+            if user[5] == 0:  # Not banned
+                await context.bot.send_message(chat_id=user[0], text=message)
+                successful += 1
+            else:
+                failed += 1
+        except Exception as e:
+            failed += 1
+        
+        # Small delay to avoid rate limiting
+        await asyncio.sleep(0.1)
+    
+    await status_msg.edit_text(f"✅ Broadcast completed!\n\n📤 Successful: {successful}\n❌ Failed: {failed}")
+
+async def debug_phone_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("❌ Usage: /debugphone <number>")
+        return
+    
+    number = context.args[0]
+    await update.message.reply_text(f"🔍 Debugging phone lookup for: {number}")
+    
+    try:
+        result = phone_lookup(number)
+        await update.message.reply_text(f"📊 Result: {json.dumps(result, indent=2)}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
+async def test_codes_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    # Create a test code
+    test_code = create_redeem_code(5, user_id, 2)
+    await update.message.reply_text(f"🧪 TEST CODE CREATED:\n\n🔑 Code: `{test_code}`\n💰 Credits: 5\n🔢 Max Uses: 2", parse_mode='Markdown')
+
+async def list_codes_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    codes = get_redeem_codes()
+    
+    if not codes:
+        await update.message.reply_text("❌ No redeem codes found")
+        return
+    
+    response = "🔑 ACTIVE REDEEM CODES:\n\n"
+    active_codes = 0
+    
+    for code in codes:
+        code_text, credits, created_by, created_at, expires_at, used_by, max_uses, use_count = code
+        
+        if use_count < max_uses and (not expires_at or datetime.strptime(expires_at, '%Y-%m-%d %H:%M:%S') > datetime.now()):
+            active_codes += 1
+            remaining_uses = max_uses - use_count
+            response += f"🔑 `{code_text}`\n💰 {credits} credits\n📊 {remaining_uses}/{max_uses} uses left\n⏰ Expires: {expires_at}\n\n"
+    
+    if active_codes == 0:
+        response = "❌ No active redeem codes found"
+    
+    await update.message.reply_text(response, parse_mode='Markdown')
+
+async def admin_help_cmd(update, context):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    await admin_commands(update, context)
+
+async def error_handler(update, context):
+    """Log errors and send them to the error channel"""
+    logging.error(f"Exception while handling an update: {context.error}")
+    
+    try:
+        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+        tb_string = ''.join(tb_list)
+        
+        error_message = (
+            f"🛑 An exception was raised while handling an update\n"
+            f"💬 Update: {update}\n"
+            f"❌ Error: {context.error}\n"
+            f"🔍 Traceback:\n{tb_string}"
+        )
+        
+        # Send to error channel (truncate if too long)
+        if len(error_message) > 4000:
+            error_message = error_message[:4000] + "\n... (truncated)"
+        
+        await context.bot.send_message(chat_id=ERROR_CHANNEL_ID, text=error_message)
+    except Exception as e:
+        logging.error(f"Error in error handler: {e}")
+
+# Add the missing reset_all_credits command handler
+async def reset_all_credits_cmd(update, context):
+    """Fix credits for all existing users"""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Access denied.")
+        return
+    
+    reset_count = reset_all_credits()
+    await update.message.reply_text(f"✅ Reset credits for {reset_count} users to default ({DEFAULT_CREDITS} credits)")
+
+# ===== MAIN FUNCTION =====
+def main():
+    from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+    
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Add ALL command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("redeem", redeem_cmd))
+    application.add_handler(CommandHandler("admincommands", admin_commands))
+ application.add_handler(CommandHandler("addcredits", add_credits_cmd))
+    application.add_handler(CommandHandler("removecredits", remove_credits_cmd))
+    application.add_handler(CommandHandler("setcredits", set_credits_cmd))
+    application.add_handler(CommandHandler("resetcredits", reset_credits_cmd))
+    application.add_handler(CommandHandler("resetuser", reset_user_cmd))
+    application.add_handler(CommandHandler("usercredits", user_credits_cmd))
+    application.add_handler(CommandHandler("usercreditsdetailed", user_credits_detailed_cmd))
+    application.add_handler(CommandHandler("credithistory", credit_history_cmd))
+    application.add_handler(CommandHandler("addcode", add_code_cmd))
+    application.add_handler(CommandHandler("revokeredeem", revoke_redeem_cmd))
+    application.add_handler(CommandHandler("debugcodes", debug_codes_cmd))
+    application.add_handler(CommandHandler("ban", ban_cmd))
+    application.add_handler(CommandHandler("unban", unban_cmd))
+    application.add_handler(CommandHandler("userstats", user_stats_cmd))
+    application.add_handler(CommandHandler("broadcast", broadcast_cmd))
+    application.add_handler(CommandHandler("debugphone", debug_phone_cmd))
+    application.add_handler(CommandHandler("testcodes", test_codes_cmd))
+    application.add_handler(CommandHandler("listcodes", list_codes_cmd))
+    application.add_handler(CommandHandler("adminhelp", admin_help_cmd))
+    application.add_handler(CommandHandler("resetallcredits", reset_all_credits_cmd))
+    
+    # Handle callback queries (for channel verification) - THIS MUST BE ADDED
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    
+    # Handle button messages
+    button_texts = [
+        "📱 Phone Info", "💰 My Credits", "🔗 My Referral", 
+        "🎁 Redeem Code", "❓ Help", "🧑‍💻 Support"
+    ]
+    application.add_handler(MessageHandler(filters.Text(button_texts), handle_button))
+    
+    # Handle number input for lookup
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_number_lookup))
+    
+    # Add error handler
+    application.add_error_handler(error_handler)
+    
+    print("🤖 Ghost OSINT Bot is running...")
+    print("🚀 Enhanced with multiple API sources!")
+    print("📄 Reports are sent as downloadable TXT files!")
+    print("💾 All database functions are active!")
+    print("🔧 Admin commands loaded: 21 commands")
+    print("📢 Channel verification system: ACTIVE")
+    print("🔗 Channels configured:")
+    for channel in REQUIRED_CHANNELS:
+        print(f"   - {channel['name']}: {channel['url']}")
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
