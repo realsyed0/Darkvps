@@ -2,26 +2,29 @@ from flask import Flask, request, render_template, send_from_directory
 import subprocess
 import os
 import re
+import threading
+import time
 
 app = Flask(__name__)
 
-# ✅ ALWAYS start from server root (Render compatible)
 BASE_DIR = os.getcwd()
 current_dir = BASE_DIR
 
+# 🔥 Track running bots
+running_bots = {}
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# ✅ Serve files (HTML, JS, etc)
+# ✅ Serve files
 @app.route("/files/<path:filename>")
 def serve_file(filename):
     return send_from_directory(current_dir, filename)
 
 
-# 🔥 Auto install missing modules
+# 🔥 AUTO INSTALL + RUN
 def auto_install_and_run(cmd):
     output = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
 
@@ -29,7 +32,6 @@ def auto_install_and_run(cmd):
     if match:
         module = match.group(1)
 
-        # fix common names
         if module == "telegram":
             module = "python-telegram-bot"
 
@@ -41,9 +43,20 @@ def auto_install_and_run(cmd):
     return output
 
 
+# 🔥 BOT RUNNER (AUTO RESTART)
+def run_bot_forever(file_path):
+    while True:
+        try:
+            print(f"Running {file_path}")
+            subprocess.run(["python", file_path])
+        except Exception as e:
+            print("Bot crashed:", e)
+            time.sleep(5)
+
+
 @app.route("/run", methods=["POST"])
 def run():
-    global current_dir
+    global current_dir, running_bots
 
     cmd = request.form.get("command", "").strip()
 
@@ -69,6 +82,7 @@ clear
 # Custom
 darkinfo
 startbot <file.py>
+stopbot <file.py>
 serve <file.html>
 """
 
@@ -79,9 +93,10 @@ serve <file.html>
 Owner: @Darkeyy0
 System: Web Linux (Render)
 Path: {current_dir}
+Running bots: {list(running_bots.keys())}
 """
 
-    # 🔥 LIST FILES
+    # 🔥 LS
     elif command == "ls":
         try:
             items = os.listdir(current_dir)
@@ -94,18 +109,17 @@ Path: {current_dir}
         except Exception as e:
             return str(e)
 
-    # 🔥 CURRENT PATH
+    # 🔥 PWD
     elif command == "pwd":
         return current_dir
 
-    # 🔥 CHANGE DIRECTORY
+    # 🔥 CD
     elif command == "cd":
         if not args:
             return "Usage: cd <folder>"
 
         new_path = os.path.abspath(os.path.join(current_dir, args[0]))
 
-        # ❗ Prevent escaping base dir (security)
         if not new_path.startswith(BASE_DIR):
             return "Access denied"
 
@@ -115,7 +129,7 @@ Path: {current_dir}
         else:
             return "Folder not found"
 
-    # 🔥 RUN PYTHON FILE
+    # 🔥 START BOT (AUTO RESTART + BACKGROUND)
     elif command == "startbot":
         if not args:
             return "Usage: startbot <file.py>"
@@ -125,7 +139,20 @@ Path: {current_dir}
         if not os.path.exists(file_path):
             return "File not found"
 
-        return auto_install_and_run(f"python '{file_path}'")
+        if args[0] in running_bots:
+            return "Bot already running"
+
+        thread = threading.Thread(target=run_bot_forever, args=(file_path,))
+        thread.daemon = True
+        thread.start()
+
+        running_bots[args[0]] = thread
+
+        return f"✅ Bot started: {args[0]}"
+
+    # 🔥 STOP BOT (basic)
+    elif command == "stopbot":
+        return "⚠️ Stop feature limited (Render restrictions)"
 
     # 🔥 SERVE HTML
     elif command == "serve":
@@ -134,11 +161,17 @@ Path: {current_dir}
 
         return f"/files/{args[0]}"
 
-    # 🔥 DEFAULT (run linux command)
+    # 🔥 DEFAULT COMMAND
     return auto_install_and_run(cmd)
 
 
-# ✅ RUN SERVER (Render compatible)
+# 🔥 KEEP ALIVE ROUTE
+@app.route("/ping")
+def ping():
+    return "alive"
+
+
+# ✅ RUN SERVER
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
