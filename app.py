@@ -1,145 +1,61 @@
-from flask import Flask, request, render_template, send_from_directory
+from flask import Flask, request, render_template
 import subprocess
 import os
-import re
 
 app = Flask(name)
-
-✅ ALWAYS start from server root (Render compatible)
 
 BASE_DIR = os.getcwd()
 current_dir = BASE_DIR
 
+
 @app.route("/")
 def home():
-return render_template("index.html")
+    return render_template("index.html")
 
-✅ Serve files (HTML, JS, etc)
-
-@app.route("/files/path:filename")
-def serve_file(filename):
-return send_from_directory(current_dir, filename)
-
-🔥 Auto install missing modules
-
-def auto_install_and_run(cmd):
-output = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
-
-match = re.search(r"No module named '(.+?)'", output)  
-if match:  
-    module = match.group(1)  
-
-    # fix common names  
-    if module == "telegram":  
-        module = "python-telegram-bot"  
-
-    install = subprocess.getoutput(f"pip install {module}")  
-    retry = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")  
-
-    return f"📦 Installing {module}...\n\n{install}\n\n--- RETRY ---\n\n{retry}"  
-
-return output
 
 @app.route("/run", methods=["POST"])
 def run():
-global current_dir
+    global current_dir
 
-cmd = request.form.get("command", "").strip()  
+    cmd = request.form.get("command", "").strip()
+    if not cmd:
+        return ""
 
-if not cmd:  
-    return ""  
+    parts = cmd.split()
+    command = parts[0]
+    args = parts[1:]
 
-parts = cmd.split()  
-command = parts[0].lower()  
-args = parts[1:]  
+    # ===== BASIC =====
+    if command == "clear":
+        return "CLEAR"
 
-# 🔥 CLEAR  
-if command == "clear":  
-    return "CLEAR"  
+    elif command == "pwd":
+        return current_dir
 
-# 🔥 HELP  
-elif command == "help":  
-    return """Commands:
+    elif command == "ls":
+        try:
+            return "\n".join(os.listdir(current_dir))
+        except:
+            return "error"
 
-ls
-cd <folder>
-pwd
-clear
+    elif command == "cd":
+        if not args:
+            return "usage: cd folder"
 
-Custom
+        new_path = os.path.abspath(os.path.join(current_dir, args[0]))
 
-darkinfo
-startbot <file.py>
-serve <file.html>
-"""
+        if os.path.isdir(new_path):
+            current_dir = new_path
+            return "ok"
+        else:
+            return "folder not found"
 
-# 🔥 INFO  
-elif command == "darkinfo":  
-    return f"""🐺 Dark VPS Panel
+    # ===== DEFAULT SHELL =====
+    try:
+        return subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
+    except Exception as e:
+        return str(e)
 
-Owner: @Darkeyy0
-System: Web Linux (Render)
-Path: {current_dir}
-"""
-
-# 🔥 LIST FILES  
-elif command == "ls":  
-    try:  
-        items = os.listdir(current_dir)  
-
-        folders = sorted([f"[DIR] {i}/" for i in items if os.path.isdir(os.path.join(current_dir, i))])  
-        files = sorted([i for i in items if not os.path.isdir(os.path.join(current_dir, i))])  
-
-        return "\n".join(folders + files)  
-
-    except Exception as e:  
-        return str(e)  
-
-# 🔥 CURRENT PATH  
-elif command == "pwd":  
-    return current_dir  
-
-# 🔥 CHANGE DIRECTORY  
-elif command == "cd":  
-    if not args:  
-        return "Usage: cd <folder>"  
-
-    new_path = os.path.abspath(os.path.join(current_dir, args[0]))  
-
-    # ❗ Prevent escaping base dir (security)  
-    if not new_path.startswith(BASE_DIR):  
-        return "Access denied"  
-
-    if os.path.isdir(new_path):  
-        current_dir = new_path  
-        return "OK"  
-    else:  
-        return "Folder not found"  
-
-# 🔥 RUN PYTHON FILE  
-elif command == "startbot":  
-    if not args:  
-        return "Usage: startbot <file.py>"  
-
-    file_path = os.path.join(current_dir, args[0])  
-
-    if not os.path.exists(file_path):  
-        return "File not found"  
-
-    return auto_install_and_run(f"python '{file_path}'")  
-
-# 🔥 SERVE HTML  
-elif command == "serve":  
-    if not args:  
-        return "Usage: serve <file.html>"  
-
-    return f"/files/{args[0]}"  
-
-# 🔥 DEFAULT (run linux command)  
-return auto_install_and_run(cmd)
-
-✅ RUN SERVER (Render compatible)
 
 if name == "main":
-port = int(os.environ.get("PORT", 5000))
-app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
