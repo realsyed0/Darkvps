@@ -2,211 +2,144 @@ from flask import Flask, request, render_template, send_from_directory
 import subprocess
 import os
 import re
-import threading
-import time
 
 app = Flask(name)
+
+✅ ALWAYS start from server root (Render compatible)
 
 BASE_DIR = os.getcwd()
 current_dir = BASE_DIR
 
-running_bots = {}
-bot_processes = {}
-
-
 @app.route("/")
 def home():
-    return render_template("index.html")
+return render_template("index.html")
 
+✅ Serve files (HTML, JS, etc)
 
-@app.route("/files/<path:filename>")
+@app.route("/files/path:filename")
 def serve_file(filename):
-    return send_from_directory(current_dir, filename)
+return send_from_directory(current_dir, filename)
 
+🔥 Auto install missing modules
 
-# 🔥 AUTO INSTALL
 def auto_install_and_run(cmd):
-    output = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
+output = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
 
-    match = re.search(r"No module named '(.+?)'", output)
-    if match:
-        module = match.group(1)
+match = re.search(r"No module named '(.+?)'", output)  
+if match:  
+    module = match.group(1)  
 
-        if module == "telegram":
-            module = "python-telegram-bot"
+    # fix common names  
+    if module == "telegram":  
+        module = "python-telegram-bot"  
 
-        subprocess.getoutput(f"pip install {module}")
-        return subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
+    install = subprocess.getoutput(f"pip install {module}")  
+    retry = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")  
 
-    return output
+    return f"📦 Installing {module}...\n\n{install}\n\n--- RETRY ---\n\n{retry}"  
 
-
-# 🔥 BOT RUNNER (AUTO RESTART)
-def run_bot_forever(file_path, name):
-    while True:
-        try:
-            process = subprocess.Popen(["python", file_path])
-            bot_processes[name] = process
-            process.wait()
-        except Exception as e:
-            print(f"{name} crashed:", e)
-        time.sleep(5)
-
+return output
 
 @app.route("/run", methods=["POST"])
 def run():
-    global current_dir
+global current_dir
 
-    cmd = request.form.get("command", "").strip()
+cmd = request.form.get("command", "").strip()  
 
-    if not cmd:
-        return ""
+if not cmd:  
+    return ""  
 
-    parts = cmd.split()
-    command = parts[0].lower()
-    args = parts[1:]
+parts = cmd.split()  
+command = parts[0].lower()  
+args = parts[1:]  
 
-    if command == "clear":
-        return "CLEAR"
+# 🔥 CLEAR  
+if command == "clear":  
+    return "CLEAR"  
 
-    elif command == "help":
-        return """Commands:
+# 🔥 HELP  
+elif command == "help":  
+    return """Commands:
+
 ls
 cd <folder>
 pwd
 clear
+
+Custom
+
 darkinfo
 startbot <file.py>
-stopbot <file.py>
 serve <file.html>
 """
 
-    elif command == "darkinfo":
-        return f"""🐺 Dark VPS Panel
+# 🔥 INFO  
+elif command == "darkinfo":  
+    return f"""🐺 Dark VPS Panel
 
 Owner: @Darkeyy0
-System: Render Linux
+System: Web Linux (Render)
 Path: {current_dir}
-
-Running bots: {list(running_bots.keys())}
 """
 
-    elif command == "ls":
-        try:
-            items = os.listdir(current_dir)
+# 🔥 LIST FILES  
+elif command == "ls":  
+    try:  
+        items = os.listdir(current_dir)  
 
-            folders = sorted([
-                f"[DIR] {i}/"
-                for i in items
-                if os.path.isdir(os.path.join(current_dir, i))
-            ])
+        folders = sorted([f"[DIR] {i}/" for i in items if os.path.isdir(os.path.join(current_dir, i))])  
+        files = sorted([i for i in items if not os.path.isdir(os.path.join(current_dir, i))])  
 
-            files = sorted([
-                i for i in items
-                if not os.path.isdir(os.path.join(current_dir, i))
-            ])
+        return "\n".join(folders + files)  
 
-            return "\n".join(folders + files)
+    except Exception as e:  
+        return str(e)  
 
-        except Exception as e:
-            return str(e)
+# 🔥 CURRENT PATH  
+elif command == "pwd":  
+    return current_dir  
 
-    elif command == "pwd":
-        return current_dir
+# 🔥 CHANGE DIRECTORY  
+elif command == "cd":  
+    if not args:  
+        return "Usage: cd <folder>"  
 
-    elif command == "cd":
-        if not args:
-            return "Usage: cd <folder>"
+    new_path = os.path.abspath(os.path.join(current_dir, args[0]))  
 
-        new_path = os.path.abspath(os.path.join(current_dir, args[0]))
+    # ❗ Prevent escaping base dir (security)  
+    if not new_path.startswith(BASE_DIR):  
+        return "Access denied"  
 
-        if not new_path.startswith(BASE_DIR):
-            return "Access denied"
+    if os.path.isdir(new_path):  
+        current_dir = new_path  
+        return "OK"  
+    else:  
+        return "Folder not found"  
 
-        if os.path.isdir(new_path):
-            current_dir = new_path
-            return "OK"
-        else:
-            return "Folder not found"
+# 🔥 RUN PYTHON FILE  
+elif command == "startbot":  
+    if not args:  
+        return "Usage: startbot <file.py>"  
 
-    # 🔥 START BOT
-    elif command == "startbot":
-        if not args:
-            return "Usage: startbot <file.py>"
+    file_path = os.path.join(current_dir, args[0])  
 
-        file_name = args[0]
-        file_path = os.path.join(current_dir, file_name)
+    if not os.path.exists(file_path):  
+        return "File not found"  
 
-        if not os.path.exists(file_path):
-            return "File not found"
+    return auto_install_and_run(f"python '{file_path}'")  
 
-        if file_name in running_bots:
-            return "Bot already running"
+# 🔥 SERVE HTML  
+elif command == "serve":  
+    if not args:  
+        return "Usage: serve <file.html>"  
 
-        thread = threading.Thread(
-            target=run_bot_forever,
-            args=(file_path, file_name)
-        )
-        thread.daemon = True
-        thread.start()
+    return f"/files/{args[0]}"  
 
-        running_bots[file_name] = thread
+# 🔥 DEFAULT (run linux command)  
+return auto_install_and_run(cmd)
 
-        return f"✅ Bot started: {file_name}"
+✅ RUN SERVER (Render compatible)
 
-    # 🔥 STOP BOT
-    elif command == "stopbot":
-        if not args:
-            return "Usage: stopbot <file.py>"
-
-        name = args[0]
-
-        if name not in bot_processes:
-            return "Bot not running"
-
-        try:
-            bot_processes[name].terminate()
-            del bot_processes[name]
-            del running_bots[name]
-            return f"🛑 Bot stopped: {name}"
-        except Exception as e:
-            return str(e)
-
-    elif command == "serve":
-        if not args:
-            return "Usage: serve <file.html>"
-
-        return f"/files/{args[0]}"
-
-    return auto_install_and_run(cmd)
-
-
-# 🔥 KEEP ALIVE
-@app.route("/ping")
-def ping():
-# 🔥 AUTO START BOT
-def auto_start():
-    try:
-        file_path = os.path.join(BASE_DIR, "Osintbot/main.py")
-
-        if os.path.exists(file_path):
-            thread = threading.Thread(
-                target=run_bot_forever,
-                args=(file_path, "main.py")
-            )
-            thread.daemon = True
-            thread.start()
-
-            running_bots["main.py"] = thread
-            print("✅ Auto bot started")
-
-    except Exception as e:
-        print("Auto start error:", e)
-
-
-# 🔥 RUN SERVER
 if name == "main":
-    auto_start()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-    return "alive"
+port = int(os.environ.get("PORT", 5000))
+app.run(host="0.0.0.0", port=port)
