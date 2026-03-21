@@ -5,12 +5,11 @@ import re
 import threading
 import time
 
-app = Flask(__name__)
+app = Flask(name)
 
 BASE_DIR = os.getcwd()
 current_dir = BASE_DIR
 
-# 🔥 running bots tracker
 running_bots = {}
 bot_processes = {}
 
@@ -36,10 +35,8 @@ def auto_install_and_run(cmd):
         if module == "telegram":
             module = "python-telegram-bot"
 
-        install = subprocess.getoutput(f"pip install {module}")
-        retry = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
-
-        return f"📦 Installing {module}...\n\n{install}\n\n--- RETRY ---\n\n{retry}"
+        subprocess.getoutput(f"pip install {module}")
+        return subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
 
     return output
 
@@ -58,7 +55,7 @@ def run_bot_forever(file_path, name):
 
 @app.route("/run", methods=["POST"])
 def run():
-    global current_dir, running_bots
+    global current_dir
 
     cmd = request.form.get("command", "").strip()
 
@@ -69,54 +66,54 @@ def run():
     command = parts[0].lower()
     args = parts[1:]
 
-    # CLEAR
     if command == "clear":
-        return "__CLEAR__"
+        return "CLEAR"
 
-    # HELP
     elif command == "help":
         return """Commands:
 ls
 cd <folder>
 pwd
 clear
-
-# Custom
 darkinfo
 startbot <file.py>
 stopbot <file.py>
 serve <file.html>
 """
 
-    # INFO
     elif command == "darkinfo":
         return f"""🐺 Dark VPS Panel
 
 Owner: @Darkeyy0
-System: Web Linux (Render)
+System: Render Linux
 Path: {current_dir}
 
 Running bots: {list(running_bots.keys())}
 """
 
-    # LS
     elif command == "ls":
         try:
             items = os.listdir(current_dir)
 
-            folders = sorted([f"[DIR] {i}/" for i in items if os.path.isdir(os.path.join(current_dir, i))])
-            files = sorted([i for i in items if not os.path.isdir(os.path.join(current_dir, i))])
+            folders = sorted([
+                f"[DIR] {i}/"
+                for i in items
+                if os.path.isdir(os.path.join(current_dir, i))
+            ])
+
+            files = sorted([
+                i for i in items
+                if not os.path.isdir(os.path.join(current_dir, i))
+            ])
 
             return "\n".join(folders + files)
 
         except Exception as e:
             return str(e)
 
-    # PWD
     elif command == "pwd":
         return current_dir
 
-    # CD
     elif command == "cd":
         if not args:
             return "Usage: cd <folder>"
@@ -146,7 +143,10 @@ Running bots: {list(running_bots.keys())}
         if file_name in running_bots:
             return "Bot already running"
 
-        thread = threading.Thread(target=run_bot_forever, args=(file_path, file_name))
+        thread = threading.Thread(
+            target=run_bot_forever,
+            args=(file_path, file_name)
+        )
         thread.daemon = True
         thread.start()
 
@@ -166,13 +166,12 @@ Running bots: {list(running_bots.keys())}
 
         try:
             bot_processes[name].terminate()
-            del running_bots[name]
             del bot_processes[name]
+            del running_bots[name]
             return f"🛑 Bot stopped: {name}"
         except Exception as e:
             return str(e)
 
-    # SERVE
     elif command == "serve":
         if not args:
             return "Usage: serve <file.html>"
@@ -182,100 +181,32 @@ Running bots: {list(running_bots.keys())}
     return auto_install_and_run(cmd)
 
 
-# 🔥 KEEP ALIVE ROUTE
+# 🔥 KEEP ALIVE
 @app.route("/ping")
 def ping():
-    return "alive"
-
-
-# 🔥 AUTO START BOT (EDIT PATH HERE)
+# 🔥 AUTO START BOT
 def auto_start():
     try:
         file_path = os.path.join(BASE_DIR, "Osintbot/main.py")
 
         if os.path.exists(file_path):
-            thread = threading.Thread(target=run_bot_forever, args=(file_path, "main.py"))
+            thread = threading.Thread(
+                target=run_bot_forever,
+                args=(file_path, "main.py")
+            )
             thread.daemon = True
             thread.start()
-            running_bots["main.py"] = thread
 
+            running_bots["main.py"] = thread
             print("✅ Auto bot started")
+
     except Exception as e:
         print("Auto start error:", e)
 
 
 # 🔥 RUN SERVER
-if __name__ == "__main__":
-    auto_start()  # 👈 auto bot start
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)            return "\n".join(folders + files)
-
-        except Exception as e:
-            return str(e)
-
-    # 🔥 PWD
-    elif command == "pwd":
-        return current_dir
-
-    # 🔥 CD
-    elif command == "cd":
-        if not args:
-            return "Usage: cd <folder>"
-
-        new_path = os.path.abspath(os.path.join(current_dir, args[0]))
-
-        if not new_path.startswith(BASE_DIR):
-            return "Access denied"
-
-        if os.path.isdir(new_path):
-            current_dir = new_path
-            return "OK"
-        else:
-            return "Folder not found"
-
-    # 🔥 START BOT (AUTO RESTART + BACKGROUND)
-    elif command == "startbot":
-        if not args:
-            return "Usage: startbot <file.py>"
-
-        file_path = os.path.join(current_dir, args[0])
-
-        if not os.path.exists(file_path):
-            return "File not found"
-
-        if args[0] in running_bots:
-            return "Bot already running"
-
-        thread = threading.Thread(target=run_bot_forever, args=(file_path,))
-        thread.daemon = True
-        thread.start()
-
-        running_bots[args[0]] = thread
-
-        return f"✅ Bot started: {args[0]}"
-
-    # 🔥 STOP BOT (basic)
-    elif command == "stopbot":
-        return "⚠️ Stop feature limited (Render restrictions)"
-
-    # 🔥 SERVE HTML
-    elif command == "serve":
-        if not args:
-            return "Usage: serve <file.html>"
-
-        return f"/files/{args[0]}"
-
-    # 🔥 DEFAULT COMMAND
-    return auto_install_and_run(cmd)
-
-
-# 🔥 KEEP ALIVE ROUTE
-@app.route("/ping")
-def ping():
-    return "alive"
-
-
-# ✅ RUN SERVER
-if __name__ == "__main__":
+if name == "main":
+    auto_start()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+    return "alive"
