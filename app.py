@@ -3,22 +3,26 @@ import subprocess
 import os
 import re
 
-app = Flask(name)
+app = Flask(__name__)
 
-current_dir = "/storage/emulated/0"
+BASE_DIR = os.getcwd()
+current_dir = BASE_DIR
+
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
-# 🔥 Serve HTML / files
+
+# ✅ Serve files
 @app.route("/files/<path:filename>")
 def serve_file(filename):
     return send_from_directory(current_dir, filename)
 
-# 🔥 Auto install + run
+
+# 🔥 Auto install missing modules
 def auto_install_and_run(cmd):
-    output = subprocess.getoutput(f"cd {current_dir} && {cmd}")
+    output = subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
 
     match = re.search(r"No module named '(.+?)'", output)
     if match:
@@ -27,31 +31,28 @@ def auto_install_and_run(cmd):
         if module == "telegram":
             module = "python-telegram-bot"
 
-        install = subprocess.getoutput(f"pip install {module}")
-        retry = subprocess.getoutput(f"cd {current_dir} && {cmd}")
-
-        return f"Installing {module}...\n\n{install}\n\n--- RETRY ---\n\n{retry}"
+        subprocess.getoutput(f"pip install {module}")
+        return subprocess.getoutput(f"cd '{current_dir}' && {cmd}")
 
     return output
+
 
 @app.route("/run", methods=["POST"])
 def run():
     global current_dir
 
-    cmd = request.form.get("command")
+    cmd = request.form.get("command", "").strip()
 
     if not cmd:
         return ""
 
-    cmd = cmd.strip()
     parts = cmd.split()
-
     command = parts[0].lower()
     args = parts[1:]
 
     # CLEAR
     if command == "clear":
-        return "CLEAR"
+        return "__CLEAR__"
 
     # HELP
     elif command == "help":
@@ -69,44 +70,28 @@ serve <file.html>
 
     # INFO
     elif command == "darkinfo":
-        return "Dark VPS 😈 | Python + HTML Supported"
+        return f"""🐺 Dark VPS Panel
 
-    # START PYTHON
-    elif command == "startbot":
-        if not args:
-            return "Usage: startbot <file.py>"
-
-        file_path = os.path.join(current_dir, args[0])
-
-        if not os.path.exists(file_path):
-            return "File not found"
-
-        return auto_install_and_run(f"python {file_path}")
-
-    # SERVE HTML
-    elif command == "serve":
-        if not args:
-            return "Usage: serve <file.html>"
-
-        return f"http://localhost:5000/files/{args[0]}"
+Owner: @Darkeyy0
+System: Web Linux (Render)
+Path: {current_dir}
+"""
 
     # LS
     elif command == "ls":
         try:
             items = os.listdir(current_dir)
 
-            folders = []
-            files = []
+            folders = sorted([
+                f"[DIR] {i}/"
+                for i in items
+                if os.path.isdir(os.path.join(current_dir, i))
+            ])
 
-            for item in items:
-                full_path = os.path.join(current_dir, item)
-                if os.path.isdir(full_path):
-                    folders.append(f"[DIR]{item}/")
-                else:
-                    files.append(item)
-
-            folders.sort()
-            files.sort()
+            files = sorted([
+                i for i in items
+                if not os.path.isdir(os.path.join(current_dir, i))
+            ])
 
             return "\n".join(folders + files)
 
@@ -122,17 +107,41 @@ serve <file.html>
         if not args:
             return "Usage: cd <folder>"
 
-        new_path = os.path.join(current_dir, args[0])
+        new_path = os.path.abspath(os.path.join(current_dir, args[0]))
+
+        if not new_path.startswith(BASE_DIR):
+            return "Access denied"
 
         if os.path.isdir(new_path):
-            current_dir = os.path.abspath(new_path)
+            current_dir = new_path
             return "OK"
         else:
             return "Folder not found"
+
+    # 🔥 RUN PYTHON FILE (simple)
+    elif command == "startbot":
+        if not args:
+            return "Usage: startbot <file.py>"
+
+        file_path = os.path.join(current_dir, args[0])
+
+        if not os.path.exists(file_path):
+            return "File not found"
+
+        return subprocess.getoutput(f"python '{file_path}'")
+
+    # SERVE HTML
+    elif command == "serve":
+        if not args:
+            return "Usage: serve <file.html>"
+
+        return f"/files/{args[0]}"
 
     # DEFAULT
     return auto_install_and_run(cmd)
 
 
-if name == "main":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+# RUN SERVER
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
